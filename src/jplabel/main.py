@@ -150,3 +150,41 @@ async def label_next_image(username: str):
         </html>
         """
         return HTMLResponse(html)
+
+
+@app.get("/stats", response_class=HTMLResponse)
+async def stats():
+    html = """
+    <html>
+        <head>
+            <title>Stats</title>
+            <link rel="stylesheet" href="/static/jp.css">
+        </head>
+        <body>
+            <div class="centering">
+                <table>
+                    <tr>
+                        <th>Image</th>
+    """
+    for label_text in label_texts:
+        html += f"<th>{label_text}</th>"
+    html += """
+                    </tr>
+    """
+
+    with Session() as session:
+        images = session.query(Image)
+        labels = session.query(Label)
+        for image in images:
+            html += f"<tr><td>{image.filename}</td>"
+            for label in labels:  # Careful; might not match `label_texts` if labels are changed/added later
+                count = session.query(Labeling).filter(Labeling.image == image, Labeling.label == label).count()
+                html += f"<td>{count}</td>"
+            html += "</tr>"
+    html += """
+                </table>
+            </div>
+        </body>
+    </html>
+    """
+    return HTMLResponse(html)
