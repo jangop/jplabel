@@ -1,27 +1,23 @@
 from fastapi import FastAPI
-
-from pathlib import Path
-
-from fastapi.responses import FileResponse, HTMLResponse
 from fastapi import status
 from fastapi.exceptions import HTTPException
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func
 
-from data.models import Image, User, Label, Labeling
 from data.base import Session
-import PIL.Image
-from fastapi.staticfiles import StaticFiles
-
 from data.config import settings
+from data.models import Image, User, Label, Labeling
 
 image_directory = settings.image_path
 image_files = list(image_directory.glob("*.jpg"))
 
-label_texts = ["funny", "dull"]
+label_texts = ["single piece", "multiple pieces"]
 
 app = FastAPI()
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 def initial_setup():
     with Session() as session:
@@ -37,7 +33,9 @@ def initial_setup():
                 session.add(label)
         session.commit()
 
+
 initial_setup()
+
 
 @app.get("/image/{filename}", response_class=FileResponse)
 async def serve_image(filename: str):
@@ -46,11 +44,15 @@ async def serve_image(filename: str):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Image {filename} not available")
     return FileResponse(path)
 
+
 from pydantic import BaseModel
+
+
 class SentLabel(BaseModel):
     username: str
     filename: str
     text: str
+
 
 @app.post("/label")
 async def label_image(sent_label: SentLabel):
@@ -72,7 +74,6 @@ async def label_image(sent_label: SentLabel):
         session.commit()
 
 
-
 @app.get("/next-label/{username}", response_class=HTMLResponse)
 async def label_next_image(username: str):
     with Session() as session:
@@ -80,17 +81,37 @@ async def label_next_image(username: str):
         if user is None:
             user = User(name=username)
             session.add(user)
-        image = session.query(Image).outerjoin(Image.labelings).filter(~Image.labelings.any(Labeling.user == user)).group_by(Image).order_by(func.count(Labeling.id)).first()
+        image = session.query(Image).outerjoin(Image.labelings).filter(
+            ~Image.labelings.any(Labeling.user == user)).group_by(Image).order_by(func.count(Labeling.id)).first()
         if image is None:
             return f"Congratulations, you have labeled all images!"
+
+        label_html = ""
+        key_js = ""
+        for i, label_text in enumerate(label_texts, start=1):
+            label_html += f"""
+            <input type="submit" name="label" value="{'[' + str(i) + ']' + label_text}" onclick="setLabelValue('{label_text}')"/>
+            """
+
+            key_js += f"""
+                {"if" if i == 1 else "else if"} (event.key == "{i}") {{
+                    setLabelValue("{label_text}");
+                    sendLabel(event);
+                }}
+            """
         html = f"""
         <html>
+            <head>
+                <title>Labeling</title>
+                <link rel="stylesheet" href="/static/jp.css">
+            </head>
             <body>
-                <img src="/image/{image.filename}" style="max-height: 10cm;"/>
-                <form action="" onsubmit="sendLabel(event)">
-                    <input type="submit" name="label" value="funny" onclick="setLabelValue('funny')"/>
-                    <input type="submit" name="label" value="dull" onclick="setLabelValue('dull')"/>
-                </form>
+                <div class="centering">
+                    <img src="/image/{image.filename}" style="max-height: 10cm;"/>
+                    <form action="" onsubmit="sendLabel(event)">
+                        {label_html}
+                    </form>
+                </div>
                 <script>
                     let selectedLabel = null;
 
@@ -100,9 +121,6 @@ async def label_next_image(username: str):
 
                     function sendLabel(event) {{
                         event.preventDefault();
-                        const formData = new FormData(event.target);
-                        const label = formData.get("label");
-                        console.log(label);
                         fetch("/label", {{
                             method: "POST",
                             headers: {{
@@ -122,6 +140,11 @@ async def label_next_image(username: str):
                             }}
                         }})
                     }}
+                    
+                    document.addEventListener("keydown", function(event) {{
+                        {key_js}
+                    }})
+                    
                 </script>
             </body>
         </html>
